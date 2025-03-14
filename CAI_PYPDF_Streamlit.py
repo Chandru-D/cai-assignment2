@@ -254,7 +254,7 @@ def extract_text_from_pdf(pdf_path):
     return text
 
 # Load financial documents from PDFs
-pdf_files = ["document1.pdf", "document2.pdf"]
+pdf_files = ["Document.pdf"]
 documents = [extract_text_from_pdf(pdf) for pdf in pdf_files if os.path.exists(pdf)]
 
 if not documents:
