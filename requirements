@@ -1,0 +1,7 @@
+streamlit
+numpy
+PyPDF2
+faiss-cpu
+sentence-transformers
+rank_bm25
+huggingface_hub
