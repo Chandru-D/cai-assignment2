@@ -242,12 +242,11 @@ import faiss
 from typing import List, Tuple
 
 # Load models
-embedding_model = SentenceTransformer("all-MiniLM-L6-v2")  # Open-source embedding model
-cross_encoder = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-12-v2")  # Re-ranking model
+embedding_model = SentenceTransformer("all-MiniLM-L6-v2")  
+cross_encoder = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-12-v2")
 
 # Function to extract text from PDFs
 def extract_text_from_pdf(pdf_path):
-    """Extract text from a given PDF file."""
     doc = fitz.open(pdf_path)
     text = ""
     for page in doc:
@@ -255,41 +254,33 @@ def extract_text_from_pdf(pdf_path):
     return text
 
 # Load financial documents from PDFs
-pdf_files = ["Document.pdf"]
-documents = []
+pdf_files = ["document1.pdf", "document2.pdf"]
+documents = [extract_text_from_pdf(pdf) for pdf in pdf_files if os.path.exists(pdf)]
 
-for pdf_file in pdf_files:
-    if os.path.exists(pdf_file):
-        pdf_text = extract_text_from_pdf(pdf_file)
-        documents.append(pdf_text)  # Store extracted text
-    else:
-        st.warning(f"File {pdf_file} not found.")
+if not documents:
+    st.error("No documents found! Please upload PDFs.")
+else:
+    # Convert documents to tokens for BM25
+    tokenized_corpus = [doc.split() for doc in documents]
+    bm25 = BM25Okapi(tokenized_corpus)
 
-# Convert documents to tokens for BM25
-tokenized_corpus = [doc.split() for doc in documents]
-bm25 = BM25Okapi(tokenized_corpus)
-
-# Create embeddings
-embeddings = np.array([embedding_model.encode(doc) for doc in documents])
-
-# FAISS Vector Store
-index = faiss.IndexFlatL2(embeddings.shape[1])
-index.add(embeddings)
+    # Create embeddings (skip empty docs)
+    embeddings = np.array([embedding_model.encode(doc) for doc in documents if doc.strip()])
+    faiss.normalize_L2(embeddings)
+    index = faiss.IndexFlatIP(embeddings.shape[1])
+    index.add(embeddings)
 
 # Function to retrieve relevant docs
 def retrieve_documents(query: str, top_k: int = 3) -> List[Tuple[str, float]]:
-    """Retrieve documents using BM25 and embeddings."""
     bm25_scores = bm25.get_scores(query.split())
     top_bm25_idx = np.argsort(bm25_scores)[::-1][:top_k]
     
     query_embedding = embedding_model.encode(query).reshape(1, -1)
     _, top_embedding_idx = index.search(query_embedding, top_k)
     
-    # Combine BM25 and embeddings results
-    retrieved_docs = list(set(top_bm25_idx) | set(top_embedding_idx[0]))
+    retrieved_docs = list(set(top_bm25_idx) | set(top_embedding_idx.flatten()))
     rerank_inputs = [[query, documents[idx]] for idx in retrieved_docs]
     
-    # Re-rank using Cross-Encoder
     rerank_scores = cross_encoder.predict(rerank_inputs)
     sorted_indices = np.argsort(rerank_scores)[::-1]
     
@@ -297,8 +288,7 @@ def retrieve_documents(query: str, top_k: int = 3) -> List[Tuple[str, float]]:
 
 # Guardrail (Input Validation)
 def validate_input(query: str) -> bool:
-    """Ensure input is financial-related."""
-    restricted_terms = ["France", "weather", "movies", "sports"]
+    restricted_terms = ["france", "weather", "movies", "sports"]
     return not any(term in query.lower() for term in restricted_terms)
 
 # Streamlit UI
@@ -306,12 +296,13 @@ st.title("RAG Financial Chatbot")
 st.write("Ask me financial questions based on company earnings statements!")
 
 query = st.text_input("Enter your question:")
-if query:
+if query.strip():  # Ignore empty queries
     if validate_input(query):
         results = retrieve_documents(query)
         st.subheader("Top Answers:")
         for doc, score in results:
-            st.write(f"**Answer:** {doc[:500]}...")  # Display first 500 chars
+            st.write(f"**Answer:** {doc[:500]}...")  
             st.write(f"Confidence Score: {score:.2f}")
     else:
         st.write("❌ Invalid question. Please ask a financial-related question.")
+
