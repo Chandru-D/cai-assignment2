@@ -139,22 +139,6 @@ def validate_input(query: str) -> bool:
     # Ensure at least one finance-related term is present
     return any(re.search(rf"\b{term}\b", query_lower) for term in finance_keywords)
 
-# Sidebar for Hugging Face token
-# with st.sidebar:
-#     st.header("Settings")
-#     hf_token = st.text_input("Hugging Face Token (optional)", type="password")
-#     st.info("Enter your Hugging Face token if you want to use gated models")
-
-#     if st.button("Login to Hugging Face"):
-#         if hf_token:
-#             try:
-#                 login(hf_token)
-#                 st.success("Successfully logged in to Hugging Face!")
-#             except Exception as e:
-#                 st.error(f"Login failed: {e}")
-#         else:
-#             st.warning("Please enter a token first.")
-
 # Main app flow
 if uploaded_file is not None:
     with st.spinner("Processing document..."):
@@ -229,4 +213,3 @@ else:
     
 # Footer
 st.markdown("---")
-st.caption("Financial Statement Analyzer using RAG (Retrieval-Augmented Generation)")    
