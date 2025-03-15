@@ -3,6 +3,7 @@ import os
 import numpy as np
 import PyPDF2
 import faiss
+import re
 from sentence_transformers import SentenceTransformer
 from rank_bm25 import BM25Okapi
 from sentence_transformers.cross_encoder import CrossEncoder
