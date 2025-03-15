@@ -14,9 +14,6 @@ st.set_page_config(page_title="Financial Statement Analyzer", layout="wide")
 st.title("📊 Financial Statement of Apple inc. for financial year of 2024 & 2025")
 st.markdown("Upload your financial document and ask questions about it")
 
-# File upload section
-uploaded_file = st.file_uploader("Upload your financial statement (PDF or TXT)", type=["pdf", "txt"])
-
 def load_document(uploaded_file):
     """Loads the document from the uploaded file and extracts text content."""
     if uploaded_file is None:
@@ -139,77 +136,51 @@ def validate_input(query: str) -> bool:
     # Ensure at least one finance-related term is present
     return any(re.search(rf"\b{term}\b", query_lower) for term in finance_keywords)
 
-# Main app flow
-if uploaded_file is not None:
-    with st.spinner("Processing document..."):
-        document_text = load_document(uploaded_file)
+# Load and process documents on page load
+document_paths = ["FY24_Q1_Consolidated_Financial_Statements.pdf", "FY25_Q1_Consolidated_Financial_Statements.pdf"]
+document_texts = []
 
-        if document_text:
-            st.success(f"Document loaded: {uploaded_file.name}")
+for path in document_paths:
+    if os.path.exists(path):
+        text = load_pdf(path)
+        if text:
+            document_texts.append(text)
+    else:
+        st.error(f"File not found: {path}")
 
-            # Show document preview
-            with st.expander("Document Preview"):
-                st.text(document_text[:1000] + "..." if len(document_text) > 1000 else document_text)
+if document_texts:
+    combined_text = "\n".join(document_texts)
+    chunks = chunk_text(combined_text)
+    embeddings = embed_chunks(chunks)
+    vector_db_index = create_vector_db(embeddings)
+    bm25_index_obj = create_bm25_index(chunks)
 
-            # Chunk and embed document
-            chunks = chunk_text(document_text)
-            st.session_state.chunks = chunks
-
-            embeddings = embed_chunks(chunks)
-            vector_db_index = create_vector_db(embeddings, list(range(len(chunks))))
-            st.session_state.vector_db_index = vector_db_index
-
-            bm25_index_obj = create_bm25_index(chunks)
-            st.session_state.bm25_index_obj = bm25_index_obj
-
-            st.success(f"Document processed into {len(chunks)} chunks")
-        else:
-            st.error("Failed to load document content.")
-
-    # Query section
-    st.header("Ask questions about your financial document")
-
-    retrieval_method = st.radio(
-        "Choose retrieval method:",
-        ("1.Basic RAG Search based", "2.Advanced RAG Search BM25 based")
-    )
-
-    query = st.text_input("Enter your financial question:")
-
-    if st.button("Submit Query"):
-        if not query:
-            st.warning("Please enter a question.")
-        elif not validate_input(query):
-            st.error("❌ Invalid question. Please ask a financial-related question.")
-        else:
-            with st.spinner("Searching for answers..."):
-                if retrieval_method == "1.Basic RAG Search based":
-                    retrieved_chunks = retrieve_chunks_vector_db(
-                        query,
-                        st.session_state.vector_db_index,
-                        st.session_state.chunks
-                    )
-                    method_name = "Basic Search"
-                else:  # BM25 Search
-                    retrieved_chunks = retrieve_chunks_bm25(
-                        query,
-                        st.session_state.bm25_index_obj,
-                        st.session_state.chunks
-                    )
-                    method_name = "Advanced BM25 Search"
-
-                # Display results
-                st.subheader(f"Results from {method_name}")
-
-                for i, (chunk, confidence) in enumerate(retrieved_chunks):
-                    confidence_percentage = round(confidence * 100, 2)
-                    expander_state = i == 0  # Expand first result, collapse others
-
-                    with st.expander(f"Result {i+1} (Confidence: {confidence_percentage}%)", expanded=expander_state):
-                        st.markdown(chunk)
-
+    st.session_state.chunks = chunks
+    st.session_state.vector_db_index = vector_db_index
+    st.session_state.bm25_index_obj = bm25_index_obj
+    st.success(f"Loaded and processed {len(chunks)} chunks from {len(document_texts)} documents.")
 else:
-    st.info("Please upload a financial document to get started.")
-    
-# Footer
-st.markdown("---")
+    st.error("No documents loaded.")
+
+# Query section
+st.header("Ask questions about the financial documents")
+retrieval_method = st.radio("Choose retrieval method:", ("1.Basic RAG Search based", "2.Advanced RAG Search BM25 based"))
+query = st.text_input("Enter your financial question:")
+
+if st.button("Submit Query"):
+    if not query:
+        st.warning("Please enter a question.")
+    else:
+        with st.spinner("Searching for answers..."):
+            if retrieval_method == "1.Basic RAG Search based":
+                retrieved_chunks = retrieve_chunks_vector_db(query, st.session_state.vector_db_index, st.session_state.chunks)
+                method_name = "Basic Search"
+            else:
+                retrieved_chunks = retrieve_chunks_bm25(query, st.session_state.bm25_index_obj, st.session_state.chunks)
+                method_name = "Advanced BM25 Search"
+
+            st.subheader(f"Results from {method_name}")
+            for i, (chunk, confidence) in enumerate(retrieved_chunks):
+                confidence_percentage = round(confidence * 100, 2)
+                with st.expander(f"Result {i+1} (Confidence: {confidence_percentage}%)"):
+                    st.markdown(chunk)
