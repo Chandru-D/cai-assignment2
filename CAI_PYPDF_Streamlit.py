@@ -7,46 +7,21 @@ import faiss
 from sentence_transformers import SentenceTransformer
 from rank_bm25 import BM25Okapi
 from sentence_transformers.cross_encoder import CrossEncoder
-from huggingface_hub import login
 
 st.set_page_config(page_title="Financial Statement Analyzer", layout="wide")
 
-st.title("📊 Financial Statement of Apple inc. for financial year of 2024 & 2025")
-st.markdown("Upload your financial document and ask questions about it")
+st.title("\ud83d\udcca Financial Statement of Apple Inc. for Financial Year 2024 & 2025")
+st.markdown("Ask questions about the financial statements of Apple Inc.")
 
-def load_document(uploaded_file):
-    """Loads the document from the uploaded file and extracts text content."""
-    if uploaded_file is None:
-        return None
-
-    if uploaded_file.name.lower().endswith('.pdf'):
-        text = load_pdf(uploaded_file)
-    elif uploaded_file.name.lower().endswith('.txt'):
-        text = load_txt(uploaded_file)
-    else:
-        st.error("Unsupported file format. Please provide a PDF or TXT file.")
-        return None
-    return text
-
-def load_pdf(file):
+def load_pdf(file_path):
     """Loads text from a PDF file."""
     try:
-        pdf_reader = PyPDF2.PdfReader(file)
-        text = ""
-        for page in pdf_reader.pages:
-            text += page.extract_text()
+        with open(file_path, "rb") as file:
+            pdf_reader = PyPDF2.PdfReader(file)
+            text = "".join(page.extract_text() for page in pdf_reader.pages if page.extract_text())
         return text
     except Exception as e:
         st.error(f"Error loading PDF: {e}")
-        return None
-
-def load_txt(file):
-    """Loads text from a TXT file."""
-    try:
-        text = file.getvalue().decode("utf-8")
-        return text
-    except Exception as e:
-        st.error(f"Error loading TXT: {e}")
         return None
 
 def chunk_text(text, chunk_size=500, overlap=100):
@@ -61,30 +36,27 @@ def chunk_text(text, chunk_size=500, overlap=100):
 
 def embed_chunks(chunks, embedding_model_name="all-MiniLM-L6-v2"):
     """Embeds text chunks using a specified Sentence Transformer model."""
-    with st.spinner("Embedding document chunks..."):
-        model = SentenceTransformer(embedding_model_name)
-        embeddings = model.encode(chunks)
+    model = SentenceTransformer(embedding_model_name)
+    embeddings = model.encode(chunks)
     return embeddings
 
-def create_vector_db(embeddings, chunk_ids):
-    """Creates a FAISS vector database and adds embeddings."""
+def create_vector_db(embeddings):
+    """Creates a FAISS vector database."""
     dimension = embeddings.shape[1]
     index = faiss.IndexFlatL2(dimension)
     index.add(np.array(embeddings).astype('float32'))
     return index
 
-def retrieve_chunks_vector_db(query, vector_db, chunks, embedding_model_name="all-MiniLM-L6-v2", top_k=3):
-    """Retrieves top_k most relevant chunks from the vector database for a given query."""
-    query_embedding = embed_chunks([query], embedding_model_name)[0]
-    D, I = vector_db.search(np.array([query_embedding]).astype('float32'), top_k)
-    retrieved_chunks = [(chunks[i], D[0][j]) for j, i in enumerate(I[0])]
-    return retrieved_chunks
-
 def create_bm25_index(chunks):
     """Creates a BM25 index from the text chunks."""
     tokenized_chunks = [chunk.split() for chunk in chunks]
-    bm25_index = BM25Okapi(tokenized_chunks)
-    return bm25_index
+    return BM25Okapi(tokenized_chunks)
+
+def retrieve_chunks_vector_db(query, vector_db, chunks, embedding_model_name="all-MiniLM-L6-v2", top_k=3):
+    """Retrieves top_k most relevant chunks using FAISS vector search."""
+    query_embedding = embed_chunks([query], embedding_model_name)[0]
+    D, I = vector_db.search(np.array([query_embedding]).astype('float32'), top_k)
+    return [(chunks[i], D[0][j]) for j, i in enumerate(I[0])]
 
 def retrieve_chunks_bm25(query, bm25_index, chunks, reranking_model_name="cross-encoder/ms-marco-MiniLM-L-12-v2", top_k_bm25=10, top_k_rerank=3):
     """Retrieves and re-ranks top chunks using BM25 and a Cross-Encoder."""
@@ -97,13 +69,11 @@ def retrieve_chunks_bm25(query, bm25_index, chunks, reranking_model_name="cross-
     rerank_inputs = [[query, chunk] for chunk in retrieved_chunks_bm25]
     cross_encoder = CrossEncoder(reranking_model_name)
     rerank_scores = cross_encoder.predict(rerank_inputs)
-
+    
     chunk_score_pairs = list(zip(retrieved_chunks_bm25, rerank_scores))
     sorted_chunk_score_pairs = sorted(chunk_score_pairs, key=lambda x: x[1], reverse=True)
 
-    reranked_chunks = [(chunk, score) for chunk, score in sorted_chunk_score_pairs[:top_k_rerank]]
-    return reranked_chunks
-
+    return [(chunk, score) for chunk, score in sorted_chunk_score_pairs[:top_k_rerank]]
 
 def validate_input(query: str) -> bool:
     """Ensure input is financial-related."""
@@ -152,7 +122,7 @@ if document_texts:
     combined_text = "\n".join(document_texts)
     chunks = chunk_text(combined_text)
     embeddings = embed_chunks(chunks)
-    vector_db_index = create_vector_db(embeddings, list(range(len(embeddings))))
+    vector_db_index = create_vector_db(embeddings)
     bm25_index_obj = create_bm25_index(chunks)
 
     st.session_state.chunks = chunks
@@ -170,6 +140,8 @@ query = st.text_input("Enter your financial question:")
 if st.button("Submit Query"):
     if not query:
         st.warning("Please enter a question.")
+    elif not validate_input(query):
+        st.error("❌ Invalid question. Please ask a financial-related question.")
     else:
         with st.spinner("Searching for answers..."):
             if retrieval_method == "1.Basic RAG Search based":
