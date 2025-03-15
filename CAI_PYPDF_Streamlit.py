@@ -81,6 +81,37 @@ def retrieve_chunks_bm25(query, bm25_index, chunks, reranking_model_name="cross-
     reranked_chunks = [(chunk, score) for chunk, score in sorted_chunk_score_pairs[:top_k_rerank]]
     return reranked_chunks
 
+def validate_input(query: str) -> bool:
+    """Ensure input is financial-related."""
+    # Expanded list of restricted terms (non-finance topics and inappropriate content)
+    restricted_terms = [
+        "weather", "movies", "sports", "travel", "health", "technology",
+        "entertainment", "politics", "history", "geography", "science", "food",
+        "France", "music", "games", "celebrity", "art", "fashion", "fitness",
+        "sex", "violence", "drugs", "gambling", "adult", "explicit", "crime",
+        "religion", "spirituality", "astrology", "conspiracy", "myth", "occult"
+    ]
+
+    # Finance-related keywords derived from the financial statements document
+    finance_keywords = [
+        "net sales", "cost of sales", "gross margin", "operating income", "revenue",
+        "income", "assets", "liabilities", "equity", "cash flow", "stock", "bond",
+        "investment", "market", "banking", "loan", "interest", "credit", "capital",
+        "tax", "budget", "dividend", "share", "earnings", "debt", "amortization",
+        "accounts payable", "accounts receivable", "retained earnings", "expenses",
+        "depreciation", "balance sheet", "income statement", "term debt", "liquidity",
+        "commercial paper", "operating activities", "financing activities", "investing activities"
+    ]
+
+    query_lower = query.lower()
+
+    # Check if query contains any restricted terms
+    if any(re.search(rf"\b{term}\b", query_lower) for term in restricted_terms):
+        return False
+
+    # Ensure at least one finance-related term is present
+    return any(re.search(rf"\b{term}\b", query_lower) for term in finance_keywords)
+
 # Load and process predefined documents
 st.subheader("Processing Preloaded Financial Documents...")
 
@@ -123,6 +154,8 @@ query = st.text_input("Enter your financial question:")
 if st.button("Submit Query"):
     if not query:
         st.warning("Please enter a question.")
+    elif not validate_input(query):
+        st.error("❌ Invalid question. Please ask a financial-related question.")
     else:
         with st.spinner("Searching for answers..."):
             if retrieval_method == "1.Basic RAG Search based":
