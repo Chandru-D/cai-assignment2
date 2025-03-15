@@ -93,25 +93,13 @@ def validate_input(query: str) -> bool:
         "religion", "spirituality", "astrology", "conspiracy", "myth", "occult"
     ]
 
-    # Finance-related keywords derived from the financial statements document
-    finance_keywords = [
-        "net sales", "cost of sales", "gross margin", "operating income", "revenue",
-        "income", "assets", "liabilities", "equity", "cash flow", "stock", "bond",
-        "investment", "market", "banking", "loan", "interest", "credit", "capital",
-        "tax", "budget", "dividend", "share", "earnings", "debt", "amortization",
-        "accounts payable", "accounts receivable", "retained earnings", "expenses",
-        "depreciation", "balance sheet", "income statement", "term debt", "liquidity",
-        "commercial paper", "operating activities", "financing activities", "investing activities"
-    ]
-
     query_lower = query.lower()
 
     # Check if query contains any restricted terms
     if any(re.search(rf"\b{term}\b", query_lower) for term in restricted_terms):
         return False
-
-    # Ensure at least one finance-related term is present
-    return any(re.search(rf"\b{term}\b", query_lower) for term in finance_keywords)
+    else:
+        return True
 
 # Load and process predefined documents
 st.subheader("Processing Preloaded Financial Documents...")
