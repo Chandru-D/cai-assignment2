@@ -8,3 +8,4 @@ huggingface_hub==0.22.2
 torch==2.2.1
 transformers==4.38.2
 pymupdf==1.23.6  # Or latest version
+spacy==3.7.2  # Or latest version
