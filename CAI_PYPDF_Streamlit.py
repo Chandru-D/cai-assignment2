@@ -152,7 +152,7 @@ if document_texts:
     combined_text = "\n".join(document_texts)
     chunks = chunk_text(combined_text)
     embeddings = embed_chunks(chunks)
-    vector_db_index = create_vector_db(embeddings)
+    vector_db_index = create_vector_db(embeddings, list(range(len(embeddings))))
     bm25_index_obj = create_bm25_index(chunks)
 
     st.session_state.chunks = chunks
