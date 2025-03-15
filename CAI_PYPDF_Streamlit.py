@@ -8,6 +8,7 @@ from sentence_transformers import SentenceTransformer
 from rank_bm25 import BM25Okapi
 from sentence_transformers.cross_encoder import CrossEncoder
 import spacy
+import subprocess
 
 st.set_page_config(page_title="Financial Statement Analyzer", layout="wide")
 
@@ -15,7 +16,11 @@ st.title("📊 Financial Statement of Apple inc. for financial year of 2024 & 20
 st.markdown("Ask questions about the financial statements of Apple Inc.")
 
 # Load NLP model for entity recognition
-nlp = spacy.load("en_core_web_sm")
+try:
+    nlp = spacy.load("en_core_web_sm")
+except OSError:
+    subprocess.run(["python", "-m", "spacy", "download", "en_core_web_sm"])
+    nlp = spacy.load("en_core_web_sm")
 
 def load_pdf(file_path):
     """Loads text from a PDF file."""
