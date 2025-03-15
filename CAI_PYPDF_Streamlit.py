@@ -16,8 +16,8 @@ st.title("📊 Financial Statement of Apple inc. for financial year of 2024 & 20
 st.markdown("Ask questions about the financial statements of Apple Inc.")
 
 # Load NLP model for entity recognition
-subprocess.run(["python", "-m", "spacy", "download", "en_core_web_sm"])
-subprocess.run(["python", "-m", "spacy", "download", "en_core_web_lg"])
+# subprocess.run(["python", "-m", "spacy", "download", "en_core_web_sm"])
+# subprocess.run(["python", "-m", "spacy", "download", "en_core_web_lg"])
 subprocess.run(["python", "-m", "spacy", "download", "en"])
 nlp = spacy.load("en_core_web_sm")
 
