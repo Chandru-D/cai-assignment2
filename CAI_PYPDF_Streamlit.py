@@ -7,137 +7,209 @@ import faiss
 from sentence_transformers import SentenceTransformer
 from rank_bm25 import BM25Okapi
 from sentence_transformers.cross_encoder import CrossEncoder
+from huggingface_hub import login
 
 st.set_page_config(page_title="Financial Statement Analyzer", layout="wide")
 
-st.title("📊 Financial Statement of Apple Inc. for Financial Year 2024 & 2025")
-st.markdown("Ask questions about the financial statements of Apple Inc.")
+st.title("📊 Financial Statement of Apple inc. for financial year of 2024 & 2025")
+st.markdown("Upload your financial document and ask questions about it")
 
-def load_pdf(file_path):
+# File upload section
+uploaded_file = st.file_uploader("Upload your financial statement (PDF or TXT)", type=["pdf", "txt"])
+
+def load_document(uploaded_file):
+    """Loads the document from the uploaded file and extracts text content."""
+    if uploaded_file is None:
+        return None
+
+    if uploaded_file.name.lower().endswith('.pdf'):
+        text = load_pdf(uploaded_file)
+    elif uploaded_file.name.lower().endswith('.txt'):
+        text = load_txt(uploaded_file)
+    else:
+        st.error("Unsupported file format. Please provide a PDF or TXT file.")
+        return None
+    return text
+
+def load_pdf(file):
     """Loads text from a PDF file."""
     try:
-        with open(file_path, "rb") as file:
-            pdf_reader = PyPDF2.PdfReader(file)
-            text = "\n".join(page.extract_text() for page in pdf_reader.pages if page.extract_text())
+        pdf_reader = PyPDF2.PdfReader(file)
+        text = ""
+        for page in pdf_reader.pages:
+            text += page.extract_text()
         return text
     except Exception as e:
         st.error(f"Error loading PDF: {e}")
         return None
 
-def extract_financial_data(text):
-    """Extracts key financial data using regex."""
-    financial_data = {}
-    patterns = {
-        "Total current assets": r"(Total current assets)\s+(\$?\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?)",
-        "Net sales": r"(Total net sales)\s+(\$?\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?)"
-    }
-    
-    for key, pattern in patterns.items():
-        match = re.search(pattern, text, re.IGNORECASE)
-        if match:
-            financial_data[key] = match.group(2)
-
-    return financial_data
+def load_txt(file):
+    """Loads text from a TXT file."""
+    try:
+        text = file.getvalue().decode("utf-8")
+        return text
+    except Exception as e:
+        st.error(f"Error loading TXT: {e}")
+        return None
 
 def chunk_text(text, chunk_size=500, overlap=100):
-    """Chunks text into smaller, overlapping pieces while preserving financial sections."""
-    sections = text.split("\n\n")
+    """Chunks text into smaller, overlapping pieces."""
     chunks = []
-    buffer = ""
-    for section in sections:
-        if len(buffer) + len(section) < chunk_size:
-            buffer += section + "\n"
-        else:
-            chunks.append(buffer)
-            buffer = section + "\n"
-    if buffer:
-        chunks.append(buffer)
+    start = 0
+    while start < len(text):
+        end = start + chunk_size
+        chunks.append(text[start:end])
+        start = end - overlap
     return chunks
 
 def embed_chunks(chunks, embedding_model_name="all-MiniLM-L6-v2"):
     """Embeds text chunks using a specified Sentence Transformer model."""
-    model = SentenceTransformer(embedding_model_name)
-    embeddings = model.encode(chunks)
+    with st.spinner("Embedding document chunks..."):
+        model = SentenceTransformer(embedding_model_name)
+        embeddings = model.encode(chunks)
     return embeddings
 
-def create_vector_db(embeddings):
-    """Creates a FAISS vector database."""
+def create_vector_db(embeddings, chunk_ids):
+    """Creates a FAISS vector database and adds embeddings."""
     dimension = embeddings.shape[1]
     index = faiss.IndexFlatL2(dimension)
     index.add(np.array(embeddings).astype('float32'))
     return index
 
+def retrieve_chunks_vector_db(query, vector_db, chunks, embedding_model_name="all-MiniLM-L6-v2", top_k=3):
+    """Retrieves top_k most relevant chunks from the vector database for a given query."""
+    query_embedding = embed_chunks([query], embedding_model_name)[0]
+    D, I = vector_db.search(np.array([query_embedding]).astype('float32'), top_k)
+    retrieved_chunks = [(chunks[i], D[0][j]) for j, i in enumerate(I[0])]
+    return retrieved_chunks
+
 def create_bm25_index(chunks):
     """Creates a BM25 index from the text chunks."""
     tokenized_chunks = [chunk.split() for chunk in chunks]
-    return BM25Okapi(tokenized_chunks)
+    bm25_index = BM25Okapi(tokenized_chunks)
+    return bm25_index
 
-def retrieve_chunks_vector_db(query, vector_db, chunks, embedding_model_name="all-MiniLM-L6-v2", top_k=3):
-    """Retrieves top_k most relevant chunks using FAISS vector search."""
-    query_embedding = embed_chunks([query], embedding_model_name)[0]
-    D, I = vector_db.search(np.array([query_embedding]).astype('float32'), top_k)
-    return [(chunks[i], D[0][j]) for j, i in enumerate(I[0])]
-
-def retrieve_chunks_bm25(query, bm25_index, chunks, top_k=3):
-    """Retrieves top_k most relevant chunks using BM25."""
+def retrieve_chunks_bm25(query, bm25_index, chunks, reranking_model_name="cross-encoder/ms-marco-MiniLM-L-12-v2", top_k_bm25=10, top_k_rerank=3):
+    """Retrieves and re-ranks top chunks using BM25 and a Cross-Encoder."""
     tokenized_query = query.split()
-    scores = bm25_index.get_scores(tokenized_query)
-    top_indices = np.argsort(scores)[::-1][:top_k]
-    return [(chunks[i], scores[i]) for i in top_indices]
+    bm25_scores = bm25_index.get_scores(tokenized_query)
+    top_chunk_indices_bm25 = np.argsort(bm25_scores)[::-1][:top_k_bm25]
+    retrieved_chunks_bm25 = [chunks[i] for i in top_chunk_indices_bm25]
 
-# Load and process documents on page load
-document_paths = ["FY24_Q1_Consolidated_Financial_Statements.pdf", "FY25_Q1_Consolidated_Financial_Statements.pdf"]
-document_texts = []
-financial_data_map = {}
+    # Re-ranking with Cross-Encoder
+    rerank_inputs = [[query, chunk] for chunk in retrieved_chunks_bm25]
+    cross_encoder = CrossEncoder(reranking_model_name)
+    rerank_scores = cross_encoder.predict(rerank_inputs)
 
-for path in document_paths:
-    if os.path.exists(path):
-        text = load_pdf(path)
-        if text:
-            document_texts.append(text)
-            financial_data_map.update(extract_financial_data(text))
-    else:
-        st.error(f"File not found: {path}")
+    chunk_score_pairs = list(zip(retrieved_chunks_bm25, rerank_scores))
+    sorted_chunk_score_pairs = sorted(chunk_score_pairs, key=lambda x: x[1], reverse=True)
 
-if document_texts:
-    combined_text = "\n".join(document_texts)
-    chunks = chunk_text(combined_text)
-    embeddings = embed_chunks(chunks)
-    vector_db_index = create_vector_db(embeddings)
-    bm25_index_obj = create_bm25_index(chunks)
+    reranked_chunks = [(chunk, score) for chunk, score in sorted_chunk_score_pairs[:top_k_rerank]]
+    return reranked_chunks
 
-    st.session_state.chunks = chunks
-    st.session_state.vector_db_index = vector_db_index
-    st.session_state.bm25_index_obj = bm25_index_obj
-    st.session_state.financial_data_map = financial_data_map
-    st.success(f"Loaded and processed {len(chunks)} chunks from {len(document_texts)} documents.")
-else:
-    st.error("No documents loaded.")
 
-# Query section
-st.header("Ask questions about the financial documents")
-retrieval_method = st.radio("Choose retrieval method:", ("1.Basic RAG Search based", "2.Advanced RAG Search BM25 based"))
-query = st.text_input("Enter your financial question:")
+def validate_input(query: str) -> bool:
+    """Ensure input is financial-related."""
+    # Expanded list of restricted terms (non-finance topics and inappropriate content)
+    restricted_terms = [
+        "weather", "movies", "sports", "travel", "health", "technology",
+        "entertainment", "politics", "history", "geography", "science", "food",
+        "France", "music", "games", "celebrity", "art", "fashion", "fitness",
+        "sex", "violence", "drugs", "gambling", "adult", "explicit", "crime",
+        "religion", "spirituality", "astrology", "conspiracy", "myth", "occult"
+    ]
 
-if st.button("Submit Query"):
-    if not query:
-        st.warning("Please enter a question.")
-    else:
-        with st.spinner("Searching for answers..."):
-            if query.lower() in st.session_state.financial_data_map:
-                answer = st.session_state.financial_data_map[query.lower()]
-                st.subheader("Exact Financial Data Found:")
-                st.markdown(f"**{query}:** {answer}")
-            else:
+    # Finance-related keywords derived from the financial statements document
+    finance_keywords = [
+        "net sales", "cost of sales", "gross margin", "operating income", "revenue",
+        "income", "assets", "liabilities", "equity", "cash flow", "stock", "bond",
+        "investment", "market", "banking", "loan", "interest", "credit", "capital",
+        "tax", "budget", "dividend", "share", "earnings", "debt", "amortization",
+        "accounts payable", "accounts receivable", "retained earnings", "expenses",
+        "depreciation", "balance sheet", "income statement", "term debt", "liquidity",
+        "commercial paper", "operating activities", "financing activities", "investing activities"
+    ]
+
+    query_lower = query.lower()
+
+    # Check if query contains any restricted terms
+    if any(re.search(rf"\b{term}\b", query_lower) for term in restricted_terms):
+        return False
+
+    # Ensure at least one finance-related term is present
+    return any(re.search(rf"\b{term}\b", query_lower) for term in finance_keywords)
+
+# Main app flow
+if uploaded_file is not None:
+    with st.spinner("Processing document..."):
+        document_text = load_document(uploaded_file)
+
+        if document_text:
+            st.success(f"Document loaded: {uploaded_file.name}")
+
+            # Show document preview
+            with st.expander("Document Preview"):
+                st.text(document_text[:1000] + "..." if len(document_text) > 1000 else document_text)
+
+            # Chunk and embed document
+            chunks = chunk_text(document_text)
+            st.session_state.chunks = chunks
+
+            embeddings = embed_chunks(chunks)
+            vector_db_index = create_vector_db(embeddings, list(range(len(chunks))))
+            st.session_state.vector_db_index = vector_db_index
+
+            bm25_index_obj = create_bm25_index(chunks)
+            st.session_state.bm25_index_obj = bm25_index_obj
+
+            st.success(f"Document processed into {len(chunks)} chunks")
+        else:
+            st.error("Failed to load document content.")
+
+    # Query section
+    st.header("Ask questions about your financial document")
+
+    retrieval_method = st.radio(
+        "Choose retrieval method:",
+        ("1.Basic RAG Search based", "2.Advanced RAG Search BM25 based")
+    )
+
+    query = st.text_input("Enter your financial question:")
+
+    if st.button("Submit Query"):
+        if not query:
+            st.warning("Please enter a question.")
+        elif not validate_input(query):
+            st.error("❌ Invalid question. Please ask a financial-related question.")
+        else:
+            with st.spinner("Searching for answers..."):
                 if retrieval_method == "1.Basic RAG Search based":
-                    retrieved_chunks = retrieve_chunks_vector_db(query, st.session_state.vector_db_index, st.session_state.chunks)
+                    retrieved_chunks = retrieve_chunks_vector_db(
+                        query,
+                        st.session_state.vector_db_index,
+                        st.session_state.chunks
+                    )
                     method_name = "Basic Search"
-                else:
-                    retrieved_chunks = retrieve_chunks_bm25(query, st.session_state.bm25_index_obj, st.session_state.chunks)
+                else:  # BM25 Search
+                    retrieved_chunks = retrieve_chunks_bm25(
+                        query,
+                        st.session_state.bm25_index_obj,
+                        st.session_state.chunks
+                    )
                     method_name = "Advanced BM25 Search"
 
+                # Display results
                 st.subheader(f"Results from {method_name}")
+
                 for i, (chunk, confidence) in enumerate(retrieved_chunks):
                     confidence_percentage = round(confidence * 100, 2)
-                    with st.expander(f"Result {i+1} (Confidence: {confidence_percentage}%)"):
+                    expander_state = i == 0  # Expand first result, collapse others
+
+                    with st.expander(f"Result {i+1} (Confidence: {confidence_percentage}%)", expanded=expander_state):
                         st.markdown(chunk)
+
+else:
+    st.info("Please upload a financial document to get started.")
+    
+# Footer
+st.markdown("---")
