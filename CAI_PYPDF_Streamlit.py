@@ -19,7 +19,7 @@ st.markdown("Ask questions about the financial statements of Apple Inc.")
 # subprocess.run(["python", "-m", "spacy", "download", "en_core_web_sm"])
 # subprocess.run(["python", "-m", "spacy", "download", "en_core_web_lg"])
 subprocess.run(["python", "-m", "spacy", "download", "en"])
-nlp = spacy.load("en_core_web_sm")
+nlp = spacy.load("en")
 
 def load_pdf(file_path):
     """Loads text from a PDF file."""
