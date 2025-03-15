@@ -7,31 +7,49 @@ import faiss
 from sentence_transformers import SentenceTransformer
 from rank_bm25 import BM25Okapi
 from sentence_transformers.cross_encoder import CrossEncoder
+import spacy
 
 st.set_page_config(page_title="Financial Statement Analyzer", layout="wide")
 
 st.title("📊 Financial Statement of Apple inc. for financial year of 2024 & 2025")
-st.markdown("Upload your financial document and ask questions about it")
+st.markdown("Ask questions about the financial statements of Apple Inc.")
+
+# Load NLP model for entity recognition
+nlp = spacy.load("en_core_web_sm")
 
 def load_pdf(file_path):
     """Loads text from a PDF file."""
     try:
         with open(file_path, "rb") as file:
             pdf_reader = PyPDF2.PdfReader(file)
-            text = "".join(page.extract_text() for page in pdf_reader.pages if page.extract_text())
+            text = "\n".join(page.extract_text() for page in pdf_reader.pages if page.extract_text())
         return text
     except Exception as e:
         st.error(f"Error loading PDF: {e}")
         return None
 
+def extract_financial_data(text):
+    """Extracts key financial data from structured text."""
+    financial_data = {}
+    pattern = re.compile(r"(Total current assets)\s+(\$?\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?)")
+    matches = pattern.findall(text)
+    for match in matches:
+        financial_data[match[0]] = match[1]
+    return financial_data
+
 def chunk_text(text, chunk_size=500, overlap=100):
-    """Chunks text into smaller, overlapping pieces."""
+    """Chunks text into smaller, overlapping pieces while preserving financial sections."""
+    sections = text.split("\n\n")
     chunks = []
-    start = 0
-    while start < len(text):
-        end = start + chunk_size
-        chunks.append(text[start:end])
-        start = end - overlap
+    buffer = ""
+    for section in sections:
+        if len(buffer) + len(section) < chunk_size:
+            buffer += section + "\n"
+        else:
+            chunks.append(buffer)
+            buffer = section + "\n"
+    if buffer:
+        chunks.append(buffer)
     return chunks
 
 def embed_chunks(chunks, embedding_model_name="all-MiniLM-L6-v2"):
@@ -58,63 +76,24 @@ def retrieve_chunks_vector_db(query, vector_db, chunks, embedding_model_name="al
     D, I = vector_db.search(np.array([query_embedding]).astype('float32'), top_k)
     return [(chunks[i], D[0][j]) for j, i in enumerate(I[0])]
 
-def retrieve_chunks_bm25(query, bm25_index, chunks, reranking_model_name="cross-encoder/ms-marco-MiniLM-L-12-v2", top_k_bm25=10, top_k_rerank=3):
-    """Retrieves and re-ranks top chunks using BM25 and a Cross-Encoder."""
+def retrieve_chunks_bm25(query, bm25_index, chunks, top_k=3):
+    """Retrieves top_k most relevant chunks using BM25."""
     tokenized_query = query.split()
-    bm25_scores = bm25_index.get_scores(tokenized_query)
-    top_chunk_indices_bm25 = np.argsort(bm25_scores)[::-1][:top_k_bm25]
-    retrieved_chunks_bm25 = [chunks[i] for i in top_chunk_indices_bm25]
-
-    # Re-ranking with Cross-Encoder
-    rerank_inputs = [[query, chunk] for chunk in retrieved_chunks_bm25]
-    cross_encoder = CrossEncoder(reranking_model_name)
-    rerank_scores = cross_encoder.predict(rerank_inputs)
-    
-    chunk_score_pairs = list(zip(retrieved_chunks_bm25, rerank_scores))
-    sorted_chunk_score_pairs = sorted(chunk_score_pairs, key=lambda x: x[1], reverse=True)
-
-    return [(chunk, score) for chunk, score in sorted_chunk_score_pairs[:top_k_rerank]]
-
-def validate_input(query: str) -> bool:
-    """Ensure input is financial-related."""
-    # Expanded list of restricted terms (non-finance topics and inappropriate content)
-    restricted_terms = [
-        "weather", "movies", "sports", "travel", "health", "technology",
-        "entertainment", "politics", "history", "geography", "science", "food",
-        "France", "music", "games", "celebrity", "art", "fashion", "fitness",
-        "sex", "violence", "drugs", "gambling", "adult", "explicit", "crime",
-        "religion", "spirituality", "astrology", "conspiracy", "myth", "occult"
-    ]
-
-    # Finance-related keywords derived from the financial statements document
-    finance_keywords = [
-        "net sales", "cost of sales", "gross margin", "operating income", "revenue",
-        "income", "assets", "liabilities", "equity", "cash flow", "stock", "bond",
-        "investment", "market", "banking", "loan", "interest", "credit", "capital",
-        "tax", "budget", "dividend", "share", "earnings", "debt", "amortization",
-        "accounts payable", "accounts receivable", "retained earnings", "expenses",
-        "depreciation", "balance sheet", "income statement", "term debt", "liquidity",
-        "commercial paper", "operating activities", "financing activities", "investing activities"
-    ]
-
-    query_lower = query.lower()
-
-    # Check if query contains any restricted terms
-    if any(re.search(rf"\b{term}\b", query_lower) for term in restricted_terms):
-        return False
-
-    # Ensure at least one finance-related term is present
-    return any(re.search(rf"\b{term}\b", query_lower) for term in finance_keywords)
+    scores = bm25_index.get_scores(tokenized_query)
+    top_indices = np.argsort(scores)[::-1][:top_k]
+    return [(chunks[i], scores[i]) for i in top_indices]
 
 # Load and process documents on page load
 document_paths = ["FY24_Q1_Consolidated_Financial_Statements.pdf", "FY25_Q1_Consolidated_Financial_Statements.pdf"]
 document_texts = []
+financial_data_map = {}
 
 for path in document_paths:
     if os.path.exists(path):
         text = load_pdf(path)
         if text:
             document_texts.append(text)
+            financial_data_map.update(extract_financial_data(text))
     else:
         st.error(f"File not found: {path}")
 
@@ -128,6 +107,7 @@ if document_texts:
     st.session_state.chunks = chunks
     st.session_state.vector_db_index = vector_db_index
     st.session_state.bm25_index_obj = bm25_index_obj
+    st.session_state.financial_data_map = financial_data_map
     st.success(f"Loaded and processed {len(chunks)} chunks from {len(document_texts)} documents.")
 else:
     st.error("No documents loaded.")
@@ -140,19 +120,22 @@ query = st.text_input("Enter your financial question:")
 if st.button("Submit Query"):
     if not query:
         st.warning("Please enter a question.")
-    elif not validate_input(query):
-        st.error("❌ Invalid question. Please ask a financial-related question.")
     else:
         with st.spinner("Searching for answers..."):
-            if retrieval_method == "1.Basic RAG Search based":
-                retrieved_chunks = retrieve_chunks_vector_db(query, st.session_state.vector_db_index, st.session_state.chunks)
-                method_name = "Basic Search"
+            if query.lower() in st.session_state.financial_data_map:
+                answer = st.session_state.financial_data_map[query.lower()]
+                st.subheader("Exact Financial Data Found:")
+                st.markdown(f"**{query}:** {answer}")
             else:
-                retrieved_chunks = retrieve_chunks_bm25(query, st.session_state.bm25_index_obj, st.session_state.chunks)
-                method_name = "Advanced BM25 Search"
+                if retrieval_method == "1.Basic RAG Search based":
+                    retrieved_chunks = retrieve_chunks_vector_db(query, st.session_state.vector_db_index, st.session_state.chunks)
+                    method_name = "Basic Search"
+                else:
+                    retrieved_chunks = retrieve_chunks_bm25(query, st.session_state.bm25_index_obj, st.session_state.chunks)
+                    method_name = "Advanced BM25 Search"
 
-            st.subheader(f"Results from {method_name}")
-            for i, (chunk, confidence) in enumerate(retrieved_chunks):
-                confidence_percentage = round(confidence * 100, 2)
-                with st.expander(f"Result {i+1} (Confidence: {confidence_percentage}%)"):
-                    st.markdown(chunk)
+                st.subheader(f"Results from {method_name}")
+                for i, (chunk, confidence) in enumerate(retrieved_chunks):
+                    confidence_percentage = round(confidence * 100, 2)
+                    with st.expander(f"Result {i+1} (Confidence: {confidence_percentage}%)"):
+                        st.markdown(chunk)
