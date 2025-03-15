@@ -10,8 +10,8 @@ from sentence_transformers.cross_encoder import CrossEncoder
 
 st.set_page_config(page_title="Financial Statement Analyzer", layout="wide")
 
-st.title("\ud83d\udcca Financial Statement of Apple Inc. for Financial Year 2024 & 2025")
-st.markdown("Ask questions about the financial statements of Apple Inc.")
+st.title("📊 Financial Statement of Apple inc. for financial year of 2024 & 2025")
+st.markdown("Upload your financial document and ask questions about it")
 
 def load_pdf(file_path):
     """Loads text from a PDF file."""
