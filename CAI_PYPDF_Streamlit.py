@@ -11,7 +11,7 @@ from huggingface_hub import login
 
 st.set_page_config(page_title="Financial Statement Analyzer", layout="wide")
 
-st.title("📊 Financial Statement Analyzer")
+st.title("📊 Financial Statement of Apple inc. for financial year of 2024 & 2025")
 st.markdown("Upload your financial document and ask questions about it")
 
 # File upload section
