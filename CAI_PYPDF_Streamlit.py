@@ -16,11 +16,8 @@ st.title("📊 Financial Statement of Apple inc. for financial year of 2024 & 20
 st.markdown("Ask questions about the financial statements of Apple Inc.")
 
 # Load NLP model for entity recognition
-try:
-    nlp = spacy.load("en_core_web_sm")
-except OSError:
-    subprocess.run(["python", "-m", "spacy", "download", "en_core_web_sm"])
-    nlp = spacy.load("en_core_web_sm")
+subprocess.run(["python", "-m", "spacy", "download", "en_core_web_sm"])
+nlp = spacy.load("en_core_web_sm")
 
 def load_pdf(file_path):
     """Loads text from a PDF file."""
