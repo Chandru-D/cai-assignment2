@@ -7,19 +7,11 @@ import faiss
 from sentence_transformers import SentenceTransformer
 from rank_bm25 import BM25Okapi
 from sentence_transformers.cross_encoder import CrossEncoder
-import spacy
-import subprocess
 
 st.set_page_config(page_title="Financial Statement Analyzer", layout="wide")
 
-st.title("📊 Financial Statement of Apple inc. for financial year of 2024 & 2025")
+st.title("📊 Financial Statement of Apple Inc. for Financial Year 2024 & 2025")
 st.markdown("Ask questions about the financial statements of Apple Inc.")
-
-# Load NLP model for entity recognition
-# subprocess.run(["python", "-m", "spacy", "download", "en_core_web_sm"])
-# subprocess.run(["python", "-m", "spacy", "download", "en_core_web_lg"])
-subprocess.run(["python", "-m", "spacy", "download", "en"])
-nlp = spacy.load("en")
 
 def load_pdf(file_path):
     """Loads text from a PDF file."""
@@ -33,12 +25,18 @@ def load_pdf(file_path):
         return None
 
 def extract_financial_data(text):
-    """Extracts key financial data from structured text."""
+    """Extracts key financial data using regex."""
     financial_data = {}
-    pattern = re.compile(r"(Total current assets)\s+(\$?\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?)")
-    matches = pattern.findall(text)
-    for match in matches:
-        financial_data[match[0]] = match[1]
+    patterns = {
+        "Total current assets": r"(Total current assets)\s+(\$?\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?)",
+        "Net sales": r"(Total net sales)\s+(\$?\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?)"
+    }
+    
+    for key, pattern in patterns.items():
+        match = re.search(pattern, text, re.IGNORECASE)
+        if match:
+            financial_data[key] = match.group(2)
+
     return financial_data
 
 def chunk_text(text, chunk_size=500, overlap=100):
